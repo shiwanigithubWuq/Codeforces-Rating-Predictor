@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Codeforces Rating Predictor</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-image: url('image.jpg'); 
+      background-size: cover;
+      background-repeat: repeat;
+      background-position: center;
+      padding: 250px;
+    }
+    h1 { text-align: center; color: #333; }
+    .container {
+      max-width: 600px; margin: auto;
+      background: white; padding: 30px;
+      box-shadow: 0px 0px 10px rgba(0,0,0,0.1);
+      border-radius: 8px;
+    }
+    input[type="text"] {
+      width: 100%; padding: 12px; font-size: 16px; margin: 10px 0; box-sizing: border-box;
+    }
+    button {
+      padding: 10px 15px; background-color: #28a745; color: white;
+      font-size: 16px; border: none; border-radius: 5px; cursor: pointer;
+    }
+    button:hover { background-color: #218838; }
+    .result, .error, .loading, .contest-info {
+      margin-top: 20px; padding: 10px; font-size: 18px; border-radius: 5px;
+    }
+    .result { background-color: #e2f7e2; color: #155724; }
+    .error { background-color: #f8d7da; color: #721c24; }
+    .loading { background-color: #fff3cd; color: #856404; }
+    .contest-info { background-color: #d0e7ff; color: #003366; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div style="text-align: center; margin-bottom: 20px;">
+    <a href="https://codeforces.com/" target="_blank">
+      <img src="https://sta.codeforces.com/s/54720/images/codeforces-logo-with-telegram.png" 
+           alt="Codeforces Logo" style="max-width: 250px; height: auto;">
+    </a>
+  </div>
+
+  <div class="container">
+    <h1>Codeforces Rating Predictor</h1>
+    <input type="text" id="handle" placeholder="Enter Codeforces handle">
+    <button onclick="processHandle()">Predict Next Rating</button>
+    <div id="loading" class="loading hidden">Loading...</div>
+    <div id="result" class="result hidden"></div>
+    <div id="contest" class="contest-info hidden"></div>
+    <div id="error" class="error hidden"></div>
+  </div>
+
+  <script>
+    async function fetchApiData(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Network response was not ok");
+      return await response.json();
+    }
+
+    async function predictLastContestChangeKNN(contests, k = 6) {
+  const filteredData = contests.slice(5); // skip first 5 contests
+
+  if (filteredData.length < 2) throw new Error("Not enough data after filtering.");
+
+  // Prepare features and changes for all but last contest
+  const features = [];
+  const changes = [];
+
+  for (let i = 1; i < filteredData.length - 1; i++) {
+    features.push(i - 1);
+    changes.push(filteredData[i].newRating - filteredData[i - 1].newRating);
+  }
+
+  // The index of the last contest to predict
+  const targetIndex = features.length;
+
+  // Calculate distances from targetIndex to all known features
+  const distances = features.map((f, i) => ({
+    index: i,
+    distance: Math.abs(f - targetIndex)
+  }));
+
+  distances.sort((a, b) => a.distance - b.distance);
+
+  // Take k nearest neighbors
+  const nearestK = distances.slice(0, k);
+
+  // Calculate predicted change as average of k nearest changes
+  const predictedChange = nearestK.reduce((sum, n) => sum + changes[n.index], 0) / k;
+
+  // Old rating before last contest
+  const last = filteredData[filteredData.length - 1];
+  const oldRatingBeforeLastContest = filteredData[filteredData.length - 2].newRating;
+
+  const predictedRating = Math.round(oldRatingBeforeLastContest + predictedChange);
+
+  return {
+    last,
+    predictedChange: Math.round(predictedChange),
+    predictedRating
+  };
+}
+
+
+    async function processHandle() {
+      const handle = document.getElementById("handle").value.trim();
+      const resultDiv = document.getElementById("result");
+      const errorDiv = document.getElementById("error");
+      const loadingDiv = document.getElementById("loading");
+      const contestDiv = document.getElementById("contest");
+
+      resultDiv.classList.add("hidden");
+      errorDiv.classList.add("hidden");
+      loadingDiv.classList.remove("hidden");
+      contestDiv.classList.add("hidden");
+
+      if (handle === "") {
+        errorDiv.textContent = "Please enter a handle.";
+        errorDiv.classList.remove("hidden");
+        loadingDiv.classList.add("hidden");
+        return;
+      }
+
+      try {
+        const ratingUrl = `https://codeforces.com/api/user.rating?handle=${handle}`;
+        const ratingData = await fetchApiData(ratingUrl);
+
+        if (!ratingData || ratingData.status !== "OK" || ratingData.result.length < 7) {
+          errorDiv.textContent = "Not enough contest data for this handle.";
+          errorDiv.classList.remove("hidden");
+          loadingDiv.classList.add("hidden");
+          return;
+        }
+
+        const prediction = await predictLastContestChangeKNN(ratingData.result);
+
+
+        resultDiv.textContent = `Predicted Next Rating: ${prediction.predictedRating} (Change: ${prediction.predictedChange})`;
+        resultDiv.classList.remove("hidden");
+
+        const last = prediction.last;
+        const division = last.contestName.includes("Div. 1") ? "Div. 1"
+                        : last.contestName.includes("Div. 2") ? "Div. 2"
+                        : last.contestName.includes("Div. 3") ? "Div. 3"
+                        : last.contestName.includes("Div. 4") ? "Div. 4"
+                        : "Unknown";
+
+        contestDiv.innerHTML = `
+          <strong>Last Contest:</strong><br>
+          Name: ${last.contestName}<br>
+          Division: ${division}<br>
+          Rank: ${last.rank}<br>
+          Old Rating: ${last.oldRating}<br>
+          New Rating: ${last.newRating}<br>
+        `;
+        contestDiv.classList.remove("hidden");
+
+      } catch (err) {
+        errorDiv.textContent = "Error: " + err.message;
+        errorDiv.classList.remove("hidden");
+      } finally {
+        loadingDiv.classList.add("hidden");
+      }
+    }
+  </script>
+</body>
+</html>
